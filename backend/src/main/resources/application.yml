@@ -1,0 +1,24 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: oa-roster
+  datasource:
+    url: jdbc:postgresql://localhost:5432/oa
+    username: postgres
+    password: postgres
+    hikari:
+      maximum-pool-size: 10
+  jpa:
+    hibernate:
+      ddl-auto: validate      # 表结构由 sql/init.sql 管理，应用层只校验
+    open-in-view: false       # 避免 Controller 层懒加载拖长连接占用
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
+
+logging:
+  level:
+    com.oa.roster: info

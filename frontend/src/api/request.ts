@@ -7,9 +7,11 @@ import type { ApiResponse, EmployeeVO, Role } from '../types';
 let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
 function toast(msg: string): void {
-  let el = document.querySelector<HTMLDivElement>('.toast');
-  if (!el) {
-    el = document.createElement('div');
+  // const + ?? 使 el 类型恒为 HTMLDivElement：let 的窄化无法穿透 setTimeout 回调
+  // （TS 认为回调执行前 let 变量可能被重新赋值），const 的窄化才可以保留。
+  const existing = document.querySelector<HTMLDivElement>('.toast');
+  const el = existing ?? document.createElement('div');
+  if (!existing) {
     el.className = 'toast';
     document.body.appendChild(el);
   }

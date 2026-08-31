@@ -1,12 +1,13 @@
-import axios from 'axios';
+import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
+import type { ApiResponse, EmployeeVO, Role } from '../types';
 
 /* ------------------------------------------------------------
  * 极简全局提示（生产项目一般接 antd message / react-hot-toast）
  * ------------------------------------------------------------ */
-let toastTimer = null;
+let toastTimer: ReturnType<typeof setTimeout> | null = null;
 
-function toast(msg) {
-  let el = document.querySelector('.toast');
+function toast(msg: string): void {
+  let el = document.querySelector<HTMLDivElement>('.toast');
   if (!el) {
     el = document.createElement('div');
     el.className = 'toast';
@@ -14,7 +15,7 @@ function toast(msg) {
   }
   el.textContent = msg;
   el.classList.add('show');
-  clearTimeout(toastTimer);
+  if (toastTimer) clearTimeout(toastTimer);
   toastTimer = setTimeout(() => el.classList.remove('show'), 2500);
 }
 
@@ -30,8 +31,13 @@ function toast(msg) {
  *    花名册接口的后端过滤+脱敏为准。
  * ------------------------------------------------------------ */
 
+const instance = axios.create({
+  baseURL: '/api',
+  timeout: 15000,
+});
+
 // Dashboard 员工管理页各角色需要剔除的敏感字段
-const DASHBOARD_STRIP_BY_ROLE = {
+const DASHBOARD_STRIP_BY_ROLE: Record<Role, string[]> = {
   HR: [],
   EXECUTIVE: ['idCard', 'bankCard', 'salary'],
   DEPT_ADMIN: ['idCard', 'bankCard', 'salary'],
@@ -39,21 +45,19 @@ const DASHBOARD_STRIP_BY_ROLE = {
   EMPLOYEE: ['idCard', 'bankCard', 'salary', 'phone'],
 };
 
-function stripDashboardRows(rows) {
-  const role = localStorage.getItem('role') || 'EMPLOYEE';
-  const stripKeys = DASHBOARD_STRIP_BY_ROLE[role] || ['idCard', 'bankCard', 'salary', 'phone'];
-  const list = Array.isArray(rows) ? rows : (rows?.content ?? []);
-  list.forEach((row) => stripKeys.forEach((key) => delete row[key]));
+function readRole(): Role {
+  const role = localStorage.getItem('role') as Role | null;
+  return role ?? 'EMPLOYEE';
+}
+
+function stripDashboardRows(rows: EmployeeVO[]): EmployeeVO[] {
+  const stripKeys = DASHBOARD_STRIP_BY_ROLE[readRole()];
+  rows.forEach((row) => stripKeys.forEach((key) => delete (row as unknown as Record<string, unknown>)[key]));
   return rows;
 }
 
-const request = axios.create({
-  baseURL: '/api',
-  timeout: 15000,
-});
-
 // 请求拦截器：token 注入
-request.interceptors.request.use((config) => {
+instance.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
   if (token) {
     config.headers['X-Auth-Token'] = token;
@@ -62,20 +66,22 @@ request.interceptors.request.use((config) => {
 });
 
 // 响应拦截器：统一解析 + 错误兜底 + dashboard 字段拦截
-request.interceptors.response.use(
-  (response) => {
-    const { code, message, data } = response.data;
+// 注意：拦截器刻意返回解包后的 data 而非完整 response（所以下方包装层
+// 把返回类型修正为业务数据 T），这里用类型断言对齐 Axios 的签名。
+instance.interceptors.response.use(
+  (response): AxiosResponse | Promise<never> => {
+    const { code, message, data } = response.data as ApiResponse<unknown>;
     if (code !== 200) {
       toast(message || '请求失败');
       return Promise.reject(new Error(message || '请求失败'));
     }
     // Dashboard 员工管理页：按角色剔除响应体中的敏感字段后返回
-    if (response.config.url.startsWith('/dashboard/employees')) {
-      return stripDashboardRows(data);
+    if (response.config.url?.startsWith('/dashboard/employees')) {
+      return stripDashboardRows(data as EmployeeVO[]) as unknown as AxiosResponse;
     }
-    return data;
+    return data as unknown as AxiosResponse;
   },
-  (error) => {
+  (error: { response?: { status?: number; data?: ApiResponse<unknown> } }) => {
     const status = error.response?.status;
     const message = error.response?.data?.message;
     if (status === 401) {
@@ -90,5 +96,18 @@ request.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+/**
+ * 类型安全包装：拦截器已把响应解包为 data 本体，
+ * 因此这里的返回类型直接是业务数据 T 而非 AxiosResponse<T>。
+ */
+const request = {
+  get<T>(url: string, config?: AxiosRequestConfig): Promise<T> {
+    return instance.get(url, config) as unknown as Promise<T>;
+  },
+  post<T>(url: string, data?: unknown, config?: AxiosRequestConfig): Promise<T> {
+    return instance.post(url, data, config) as unknown as Promise<T>;
+  },
+};
 
 export default request;

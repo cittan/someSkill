@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { fetchDashboardEmployees } from '../api/api.js';
+import { fetchDashboardEmployees } from '../api/api';
+import type { EmployeeVO } from '../types';
 
 /**
  * Dashboard 员工管理页（仅前端实现）：
@@ -9,7 +10,7 @@ import { fetchDashboardEmployees } from '../api/api.js';
  * 注意：F12 网络面板仍能看到明文原始响应，此方案仅为展示层控制；
  * 真正的数据安全以花名册（后端过滤 + 脱敏）为准。
  */
-const COLUMNS = [
+const COLUMNS: Array<{ key: keyof EmployeeVO; label: string }> = [
   { key: 'empNo', label: '工号' },
   { key: 'name', label: '姓名' },
   { key: 'deptName', label: '部门' },
@@ -22,7 +23,7 @@ const COLUMNS = [
 ];
 
 export default function Dashboard() {
-  const [rows, setRows] = useState([]);
+  const [rows, setRows] = useState<EmployeeVO[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {

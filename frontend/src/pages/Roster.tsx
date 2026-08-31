@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
-import { fetchRoster } from '../api/api.js';
-import { useAuth } from '../context/AuthContext.jsx';
+import { fetchRoster } from '../api/api';
+import { useAuth } from '../context/AuthContext';
+import type { EmployeeVO, Role } from '../types';
 
 /* ------------------------------------------------------------
  * 角色驱动的列渲染：与后端 RoleEnum 矩阵保持一致。
  * 双保险：后端 HIDDEN 字段根本不返回，前端白名单再过滤一次。
  * ------------------------------------------------------------ */
-const ALL_COLUMNS = [
+type ColumnKey = keyof EmployeeVO;
+
+const ALL_COLUMNS: Array<{ key: ColumnKey; label: string }> = [
   { key: 'empNo', label: '工号' },
   { key: 'name', label: '姓名' },
   { key: 'deptName', label: '部门' },
@@ -21,7 +24,7 @@ const ALL_COLUMNS = [
   { key: 'salary', label: '薪资' },
 ];
 
-const ROLE_VISIBLE = {
+const ROLE_VISIBLE: Record<Role, ColumnKey[]> = {
   HR: ALL_COLUMNS.map((c) => c.key),
   EXECUTIVE: ['empNo', 'name', 'deptName', 'position', 'status', 'hireDate', 'email', 'attendanceNo', 'phone'],
   DEPT_ADMIN: ['empNo', 'name', 'deptName', 'position', 'status', 'hireDate', 'email', 'attendanceNo', 'phone', 'idCard', 'bankCard'],
@@ -29,24 +32,26 @@ const ROLE_VISIBLE = {
   EMPLOYEE: ['empNo', 'name', 'deptName', 'position', 'status', 'hireDate', 'email', 'attendanceNo', 'phone'],
 };
 
-const DEPTS = [
+const DEPTS: Array<{ id: number | null; name: string }> = [
   { id: null, name: '全部部门' },
   { id: 1, name: '技术部' },
   { id: 2, name: '产品部' },
   { id: 3, name: '市场部' },
 ];
 
+const PAGE_SIZE = 20;
+
 export default function Roster() {
   const { role } = useAuth();
-  const [rows, setRows] = useState([]);
+  const [rows, setRows] = useState<EmployeeVO[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
-  const [deptId, setDeptId] = useState(null);
+  const [deptId, setDeptId] = useState<number | null>(null);
   const [keyword, setKeyword] = useState('');
   const [loading, setLoading] = useState(true);
 
   const visibleColumns = ALL_COLUMNS.filter((c) =>
-    (ROLE_VISIBLE[role] || ROLE_VISIBLE.EMPLOYEE).includes(c.key)
+    (ROLE_VISIBLE[role ?? 'EMPLOYEE']).includes(c.key)
   );
 
   useEffect(() => {
@@ -56,7 +61,7 @@ export default function Roster() {
       deptId: deptId ?? undefined,
       keyword: keyword || undefined,
       page,
-      size: 20,
+      size: PAGE_SIZE,
     })
       .then((data) => {
         if (cancelled) return;
@@ -70,7 +75,7 @@ export default function Roster() {
     };
   }, [deptId, keyword, page]);
 
-  const totalPages = Math.max(1, Math.ceil(total / 20));
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div className="page">

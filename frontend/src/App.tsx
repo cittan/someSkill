@@ -1,12 +1,13 @@
 import { Navigate, NavLink, Route, Routes } from 'react-router-dom';
-import { useAuth } from './context/AuthContext.jsx';
-import Login from './pages/Login.jsx';
-import Roster from './pages/Roster.jsx';
-import Dashboard from './pages/Dashboard.jsx';
+import { ReactNode } from 'react';
+import { useAuth } from './context/AuthContext';
+import Login from './pages/Login';
+import Roster from './pages/Roster';
+import Dashboard from './pages/Dashboard';
 
-function Guard({ children }) {
+function Guard({ children }: { children: ReactNode }) {
   const { token } = useAuth();
-  return token ? children : <Navigate to="/login" replace />;
+  return token ? <>{children}</> : <Navigate to="/login" replace />;
 }
 
 export default function App() {

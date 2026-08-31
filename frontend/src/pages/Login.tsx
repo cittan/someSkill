@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { FormEvent, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { login } from '../api/api.js';
-import { useAuth } from '../context/AuthContext.jsx';
+import { login } from '../api/api';
+import { useAuth } from '../context/AuthContext';
 
 /** 演示账号，密码统一 123456 */
-const DEMO_ACCOUNTS = [
+const DEMO_ACCOUNTS: Array<{ username: string; label: string }> = [
   { username: 'hr', label: 'HR（全部门·全字段明文）' },
   { username: 'ceo', label: '高层领导（全部门·部分字段）' },
   { username: 'admin1', label: '部门管理员（技术部·部分字段）' },
@@ -19,7 +19,7 @@ export default function Login() {
   const { login: doLogin } = useAuth();
   const navigate = useNavigate();
 
-  const onSubmit = async (e) => {
+  const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setLoading(true);
     try {

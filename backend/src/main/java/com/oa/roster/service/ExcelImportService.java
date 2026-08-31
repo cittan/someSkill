@@ -9,8 +9,8 @@ import com.oa.roster.dto.ImportReport;
 import com.oa.roster.entity.Department;
 import com.oa.roster.entity.Employee;
 import com.oa.roster.enums.EmployeeStatus;
-import com.oa.roster.repository.DepartmentRepository;
-import com.oa.roster.repository.EmployeeRepository;
+import com.oa.roster.mapper.DepartmentMapper;
+import com.oa.roster.mapper.EmployeeMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -28,7 +28,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.function.Function;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -59,8 +58,8 @@ public class ExcelImportService {
             DateTimeFormatter.ofPattern("yyyy-M-d"),
             DateTimeFormatter.ofPattern("yyyy年M月d日"));
 
-    private final EmployeeRepository employeeRepository;
-    private final DepartmentRepository departmentRepository;
+    private final EmployeeMapper employeeMapper;
+    private final DepartmentMapper departmentMapper;
     private final TransactionTemplate transactionTemplate;
 
     /** 单行校验失败异常：携带原因，由调用方收集进报告 */
@@ -82,12 +81,15 @@ public class ExcelImportService {
         ImportReport report = new ImportReport(rows.size());
 
         // ---- 预加载比对数据（避免逐行查库）----
-        Map<String, Long> deptIdByName = departmentRepository.findAll().stream()
+        Map<String, Long> deptIdByName = departmentMapper.selectAll().stream()
                 .collect(Collectors.toMap(Department::getName, Department::getId, (a, b) -> a));
-        Set<String> dbEmpNos = employeeRepository.findByEmpNoIn(
-                        rows.stream().map(EmployeeExcelRow::getEmpNo)
-                                .filter(Objects::nonNull).map(String::trim).toList())
-                .stream().map(Employee::getEmpNo).collect(Collectors.toSet());
+        List<String> empNosInFile = rows.stream().map(EmployeeExcelRow::getEmpNo)
+                .filter(Objects::nonNull).map(String::trim).toList();
+        // 空集合拼不出合法的 IN 子句，直接跳过库内预查
+        Set<String> dbEmpNos = empNosInFile.isEmpty()
+                ? Set.of()
+                : employeeMapper.selectByEmpNoIn(empNosInFile).stream()
+                        .map(Employee::getEmpNo).collect(Collectors.toSet());
 
         // ---- 逐行校验 + 转换，失败只收集不中断 ----
         Set<String> seenInFile = new HashSet<>();
@@ -102,10 +104,11 @@ public class ExcelImportService {
         }
 
         // ---- 合法行分批入库，每批独立事务（部分导入的核心）----
+        // MyBatis foreach 多值 INSERT：一批 500 条 = 一条 SQL，由独立事务包裹
         int saved = 0;
         for (int i = 0; i < valid.size(); i += BATCH_SIZE) {
             List<Employee> batch = valid.subList(i, Math.min(i + BATCH_SIZE, valid.size()));
-            transactionTemplate.executeWithoutResult(s -> employeeRepository.saveAll(batch));
+            transactionTemplate.executeWithoutResult(s -> employeeMapper.insertBatch(batch));
             saved += batch.size();
         }
         report.setSuccessCount(saved);

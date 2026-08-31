@@ -5,12 +5,12 @@ import com.oa.roster.common.BizException;
 import com.oa.roster.common.UserContext;
 import com.oa.roster.dto.EmployeeVO;
 import com.oa.roster.dto.ImportReport;
+import com.oa.roster.dto.PageVO;
 import com.oa.roster.entity.SysUser;
 import com.oa.roster.enums.RoleEnum;
 import com.oa.roster.service.ExcelImportService;
 import com.oa.roster.service.EmployeeService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -29,7 +29,7 @@ public class EmployeeController {
 
     /** 花名册列表：行级/字段级权限均由服务端处理，前端只管渲染 */
     @GetMapping
-    public ApiResponse<Page<EmployeeVO>> list(@RequestParam(required = false) Long deptId,
+    public ApiResponse<PageVO<EmployeeVO>> list(@RequestParam(required = false) Long deptId,
                                               @RequestParam(required = false) String keyword,
                                               @RequestParam(defaultValue = "0") int page,
                                               @RequestParam(defaultValue = "20") int size) {

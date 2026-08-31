@@ -1,6 +1,7 @@
 # Java / Maven
 backend/target/
 *.class
+.m2repo/
 
 # Node
 frontend/node_modules/

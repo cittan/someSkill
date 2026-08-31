@@ -2,7 +2,7 @@ package com.oa.roster.service;
 
 import com.oa.roster.common.BizException;
 import com.oa.roster.entity.SysUser;
-import com.oa.roster.repository.SysUserRepository;
+import com.oa.roster.mapper.SysUserMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.util.DigestUtils;
@@ -23,7 +23,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class AuthService {
 
-    private final SysUserRepository userRepository;
+    private final SysUserMapper userMapper;
 
     /** token -> userId */
     private final Map<String, Long> tokenUserIds = new ConcurrentHashMap<>();
@@ -32,8 +32,10 @@ public class AuthService {
     }
 
     public LoginVO login(String username, String password) {
-        SysUser user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new BizException(401, "用户名或密码错误"));
+        SysUser user = userMapper.selectByUsername(username);
+        if (user == null) {
+            throw new BizException(401, "用户名或密码错误");
+        }
         String digest = DigestUtils.md5DigestAsHex(password.getBytes(StandardCharsets.UTF_8));
         if (!digest.equals(user.getPasswordHash())) {
             throw new BizException(401, "用户名或密码错误");
@@ -48,6 +50,6 @@ public class AuthService {
             return null;
         }
         Long userId = tokenUserIds.get(token);
-        return userId == null ? null : userRepository.findById(userId).orElse(null);
+        return userId == null ? null : userMapper.selectById(userId);
     }
 }

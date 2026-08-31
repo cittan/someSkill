@@ -2,6 +2,7 @@ package com.oa.roster.service;
 
 import com.oa.roster.common.BizException;
 import com.oa.roster.dto.EmployeeVO;
+import com.oa.roster.dto.PageVO;
 import com.oa.roster.entity.Department;
 import com.oa.roster.entity.Employee;
 import com.oa.roster.entity.SysUser;
@@ -10,15 +11,12 @@ import com.oa.roster.enums.EmployeeStatus;
 import com.oa.roster.enums.RoleEnum;
 import com.oa.roster.enums.SensitiveLevel;
 import com.oa.roster.enums.Visibility;
-import com.oa.roster.repository.DepartmentRepository;
-import com.oa.roster.repository.EmployeeRepository;
+import com.oa.roster.mapper.DepartmentMapper;
+import com.oa.roster.mapper.EmployeeMapper;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -35,29 +33,36 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class EmployeeService {
 
-    private final EmployeeRepository employeeRepository;
-    private final DepartmentRepository departmentRepository;
+    private final EmployeeMapper employeeMapper;
+    private final DepartmentMapper departmentMapper;
 
-    public Page<EmployeeVO> listForUser(SysUser user, Long deptId, String keyword, int page, int size) {
+    public PageVO<EmployeeVO> listForUser(SysUser user, Long deptId, String keyword, int page, int size) {
         // 行级权限：非 ALL 范围角色，无论前端传什么都强制收敛到本部门
         Long effectiveDeptId = user.getRole().getScope() == DeptScope.ALL
                 ? deptId
                 : user.getDeptId();
 
-        Pageable pageable = PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), 100),
-                Sort.by("empNo"));
-        Page<Employee> result = employeeRepository.query(effectiveDeptId, trimToNull(keyword), pageable);
+        int safeSize = Math.min(Math.max(size, 1), 100);
+        long offset = (long) Math.max(page, 0) * safeSize;
+
+        List<Employee> rows = employeeMapper.selectByCondition(
+                effectiveDeptId, trimToNull(keyword), offset, safeSize);
+        long total = employeeMapper.countByCondition(effectiveDeptId, trimToNull(keyword));
 
         Map<Long, String> deptNames = loadDeptNames();
-        return result.map(e -> toVO(e, user.getRole(), deptNames));
+        List<EmployeeVO> content = rows.stream()
+                .map(e -> toVO(e, user.getRole(), deptNames))
+                .collect(Collectors.toList());
+        return new PageVO<>(content, total);
     }
 
     public EmployeeVO detailForUser(SysUser user, Long id) {
-        Employee employee = employeeRepository.findById(id)
-                .orElseThrow(() -> new BizException(404, "员工不存在"));
+        Employee employee = employeeMapper.selectById(id);
+        if (employee == null) {
+            throw new BizException(404, "员工不存在");
+        }
         RoleEnum effectiveRole = effectiveRole(user, employee);
-        Map<Long, String> deptNames = loadDeptNames();
-        return toVO(employee, effectiveRole, deptNames);
+        return toVO(employee, effectiveRole, loadDeptNames());
     }
 
     /**
@@ -75,7 +80,7 @@ public class EmployeeService {
 
     /** 部门表很小（组织架构级数据），一次性全量加载做内存映射，避免列表 N+1 查询 */
     private Map<Long, String> loadDeptNames() {
-        return departmentRepository.findAll().stream()
+        return departmentMapper.selectAll().stream()
                 .collect(Collectors.toMap(Department::getId, Department::getName, (a, b) -> a));
     }
 

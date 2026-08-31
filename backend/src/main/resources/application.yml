@@ -10,14 +10,16 @@ spring:
     password: postgres
     hikari:
       maximum-pool-size: 10
-  jpa:
-    hibernate:
-      ddl-auto: validate      # 表结构由 sql/init.sql 管理，应用层只校验
-    open-in-view: false       # 避免 Controller 层懒加载拖长连接占用
   servlet:
     multipart:
       max-file-size: 20MB
       max-request-size: 20MB
+
+mybatis:
+  mapper-locations: classpath:mapper/*.xml   # SQL 与接口分离，便于审查与调优
+  configuration:
+    map-underscore-to-camel-case: true        # emp_no -> empNo 自动驼峰映射
+  type-aliases-package: com.oa.roster.entity
 
 logging:
   level:

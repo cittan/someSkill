@@ -5,8 +5,8 @@ import com.oa.roster.common.UserContext;
 import com.oa.roster.dto.EmployeeVO;
 import com.oa.roster.entity.Employee;
 import com.oa.roster.enums.EmployeeStatus;
-import com.oa.roster.repository.DepartmentRepository;
-import com.oa.roster.repository.EmployeeRepository;
+import com.oa.roster.mapper.DepartmentMapper;
+import com.oa.roster.mapper.EmployeeMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -28,15 +28,15 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class DashboardController {
 
-    private final EmployeeRepository employeeRepository;
-    private final DepartmentRepository departmentRepository;
+    private final EmployeeMapper employeeMapper;
+    private final DepartmentMapper departmentMapper;
 
     @GetMapping("/employees")
     public ApiResponse<List<EmployeeVO>> list() {
         UserContext.require(); // 仅校验登录，不做字段级权限
-        Map<Long, String> deptNames = departmentRepository.findAll().stream()
+        Map<Long, String> deptNames = departmentMapper.selectAll().stream()
                 .collect(Collectors.toMap(d -> d.getId(), d -> d.getName()));
-        List<EmployeeVO> plain = employeeRepository.findAll().stream()
+        List<EmployeeVO> plain = employeeMapper.selectAll().stream()
                 .map(e -> toPlainVO(e, deptNames))
                 .collect(Collectors.toList());
         return ApiResponse.ok(plain);

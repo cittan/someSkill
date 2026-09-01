@@ -32,15 +32,18 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
- * Excel 批量导入：解析 -> 校验 -> 字段转换 -> 分批入库（部分导入策略）。
+ * Excel 批量导入：流式"攒批即处理"——监听器攒满 500 行立即校验+转换+独立事务入库。
  *
  * 设计要点（面试可讲）：
- * 1. EasyExcel 逐行 SAX 回调读取，内存占用与文件行数无关，避免原生 POI DOM 全量加载导致 OOM；
- * 2. 校验与入库分离：校验失败的行只记录（行号+原因）不中断，合法行分批入库；
+ * 1. EasyExcel SAX 逐行回调读取，且【不全量收集】：buffer 攒满即处理并清空，
+ *    内存占用 O(batch)，与文件总行数无关——初版"读完 5 万行再统一处理"的全量收集
+ *    会抵消流式收益（rows + valid 两份列表峰值 200MB+），本次重构消除了该瓶颈；
+ * 2. 校验与入库分离：校验失败的行只记录（行号+原因）不中断，合法行当批入库；
  * 3. 每批独立事务（TransactionTemplate），而非一个大事务包全部——
  *    牺牲全量原子性换取可用性，符合"存量迁移、坏行人工修复后补导"的场景；
- * 4. 库内工号/部门映射一次性预加载批量比对，避免逐行查库（5 万行 = 5 万次 SQL 的反模式）；
- * 5. 导入按工号幂等：中断重跑时已存在的工号会被校验拦下，不会重复插入。
+ * 4. 库内工号预查按【批】进行（每批 500 个工号一次 IN 查询），
+ *    既避免逐行查库，也避免几十万工号拼一个超大 IN 子句；
+ * 5. 导入按工号幂等：中断重跑时已存在的工号会被校验拦下，只会补进新行。
  */
 @Slf4j
 @Service
@@ -73,28 +76,83 @@ public class ExcelImportService {
         if (file == null || file.isEmpty()) {
             throw BizException.badRequest("上传文件为空");
         }
-        List<EmployeeExcelRow> rows = readRows(file);
-        if (rows.isEmpty()) {
-            throw BizException.badRequest("Excel 中没有数据行");
-        }
 
-        ImportReport report = new ImportReport(rows.size());
-
-        // ---- 预加载比对数据（避免逐行查库）----
+        ImportReport report = new ImportReport(0);
+        // 部门表是组织架构级小表，一次性加载建内存映射（避免逐行查库）
         Map<String, Long> deptIdByName = departmentMapper.selectAll().stream()
                 .collect(Collectors.toMap(Department::getName, Department::getId, (a, b) -> a));
-        List<String> empNosInFile = rows.stream().map(EmployeeExcelRow::getEmpNo)
+        // 文件内工号去重：跨批次共享状态
+        Set<String> seenInFile = new HashSet<>();
+
+        try (InputStream in = file.getInputStream()) {
+            List<EmployeeExcelRow> buffer = new ArrayList<>(BATCH_SIZE);
+            // 数组包装使匿名类内部可写（total 计数 / 是否已开始入库的标记）
+            int[] total = {0};
+            boolean[] anyBatchPersisted = {false};
+
+            EasyExcel.read(in, EmployeeExcelRow.class, new AnalysisEventListener<EmployeeExcelRow>() {
+                @Override
+                public void invoke(EmployeeExcelRow row, AnalysisContext context) {
+                    row.setRowIndex(context.readRowHolder().getRowIndex() + 1);
+                    buffer.add(row);
+                    total[0]++;
+                    if (buffer.size() == BATCH_SIZE) {
+                        anyBatchPersisted[0] = true;
+                        processBatch(buffer, deptIdByName, seenInFile, report);
+                        buffer.clear();
+                    }
+                }
+
+                @Override
+                public void doAfterAllAnalysed(AnalysisContext context) {
+                    // 收尾：不足一批的零头同样处理
+                    if (!buffer.isEmpty()) {
+                        anyBatchPersisted[0] = true;
+                        processBatch(buffer, deptIdByName, seenInFile, report);
+                        buffer.clear();
+                    }
+                }
+            }).sheet().doRead();
+
+            // 读取与处理结束后回填总数（流式模式下事先未知）
+            report.setTotal(total[0]);
+        } catch (Exception e) {
+            if (anyBatchPersisted[0]) {
+                // 已有批次入库后中断：已提交批次保留（部分导入语义），
+                // 原始异常直接上抛由全局异常处理器兜底，修复后凭工号幂等重跑
+                throw e;
+            }
+            // 解析阶段（尚未入库任何批次）失败：提示用户检查文件
+            log.error("Excel 解析失败", e);
+            throw BizException.badRequest("Excel 文件解析失败，请使用模板重新导出");
+        }
+        if (report.getTotal() == 0) {
+            throw BizException.badRequest("Excel 中没有数据行");
+        }
+        log.info("Excel 导入完成: total={}, success={}, failed={}",
+                report.getTotal(), report.getSuccessCount(), report.getFailedCount());
+        return report;
+    }
+
+    /**
+     * 处理一批（<=500 行）：本批工号预查 -> 逐行校验+转换 -> 合法行独立事务入库。
+     * 校验失败只收集进报告不中断；批内原子（MyBatis foreach 一条多值 INSERT + 事务）。
+     */
+    private void processBatch(List<EmployeeExcelRow> batch,
+                              Map<String, Long> deptIdByName,
+                              Set<String> seenInFile,
+                              ImportReport report) {
+        // 本批工号一次 IN 预查（幂等拦截依据），批级而非全文件级
+        List<String> empNosInBatch = batch.stream().map(EmployeeExcelRow::getEmpNo)
                 .filter(Objects::nonNull).map(String::trim).toList();
-        // 空集合拼不出合法的 IN 子句，直接跳过库内预查
-        Set<String> dbEmpNos = empNosInFile.isEmpty()
+        Set<String> dbEmpNos = empNosInBatch.isEmpty()
                 ? Set.of()
-                : employeeMapper.selectByEmpNoIn(empNosInFile).stream()
+                : employeeMapper.selectByEmpNoIn(empNosInBatch).stream()
                         .map(Employee::getEmpNo).collect(Collectors.toSet());
 
-        // ---- 逐行校验 + 转换，失败只收集不中断 ----
-        Set<String> seenInFile = new HashSet<>();
-        List<Employee> valid = new ArrayList<>(rows.size());
-        for (EmployeeExcelRow row : rows) {
+        // 逐行校验 + 转换，失败只收集不中断
+        List<Employee> valid = new ArrayList<>(batch.size());
+        for (EmployeeExcelRow row : batch) {
             try {
                 valid.add(convertAndValidate(row, deptIdByName, dbEmpNos, seenInFile));
                 seenInFile.add(row.getEmpNo().trim());
@@ -103,43 +161,11 @@ public class ExcelImportService {
             }
         }
 
-        // ---- 合法行分批入库，每批独立事务（部分导入的核心）----
-        // MyBatis foreach 多值 INSERT：一批 500 条 = 一条 SQL，由独立事务包裹
-        int saved = 0;
-        for (int i = 0; i < valid.size(); i += BATCH_SIZE) {
-            List<Employee> batch = valid.subList(i, Math.min(i + BATCH_SIZE, valid.size()));
-            transactionTemplate.executeWithoutResult(s -> employeeMapper.insertBatch(batch));
-            saved += batch.size();
+        // 合法行独立事务入库（部分导入的核心）：一批 = 一条多值 INSERT
+        if (!valid.isEmpty()) {
+            transactionTemplate.executeWithoutResult(s -> employeeMapper.insertBatch(valid));
+            report.setSuccessCount(report.getSuccessCount() + valid.size());
         }
-        report.setSuccessCount(saved);
-        log.info("Excel 导入完成: total={}, success={}, failed={}",
-                report.getTotal(), report.getSuccessCount(), report.getFailedCount());
-        return report;
-    }
-
-    /**
-     * EasyExcel 读取：监听器逐行回调（SAX 流式），行号来自读取上下文，含表头偏移。
-     */
-    private List<EmployeeExcelRow> readRows(MultipartFile file) {
-        List<EmployeeExcelRow> rows = new ArrayList<>();
-        try (InputStream in = file.getInputStream()) {
-            EasyExcel.read(in, EmployeeExcelRow.class, new AnalysisEventListener<EmployeeExcelRow>() {
-                @Override
-                public void invoke(EmployeeExcelRow row, AnalysisContext context) {
-                    row.setRowIndex(context.readRowHolder().getRowIndex() + 1);
-                    rows.add(row);
-                }
-
-                @Override
-                public void doAfterAllAnalysed(AnalysisContext context) {
-                    // 读取完毕，无需额外处理
-                }
-            }).sheet().doRead();
-        } catch (Exception e) {
-            log.error("Excel 解析失败", e);
-            throw BizException.badRequest("Excel 文件解析失败，请使用模板重新导出");
-        }
-        return rows;
     }
 
     /**

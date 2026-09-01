@@ -4,11 +4,11 @@ import com.oa.roster.common.ApiResponse;
 import com.oa.roster.common.BizException;
 import com.oa.roster.common.UserContext;
 import com.oa.roster.dto.EmployeeVO;
-import com.oa.roster.dto.ImportReport;
+import com.oa.roster.dto.ImportTaskVO;
 import com.oa.roster.dto.PageVO;
 import com.oa.roster.entity.SysUser;
 import com.oa.roster.enums.RoleEnum;
-import com.oa.roster.service.ExcelImportService;
+import com.oa.roster.service.ImportTaskService;
 import com.oa.roster.service.EmployeeService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -25,7 +25,7 @@ import org.springframework.web.multipart.MultipartFile;
 public class EmployeeController {
 
     private final EmployeeService employeeService;
-    private final ExcelImportService excelImportService;
+    private final ImportTaskService importTaskService;
 
     /** 花名册列表：行级/字段级权限均由服务端处理，前端只管渲染 */
     @GetMapping
@@ -44,13 +44,23 @@ public class EmployeeController {
         return ApiResponse.ok(employeeService.detailForUser(user, id));
     }
 
-    /** Excel 批量导入：功能级权限，仅 HR 可执行 */
+    /**
+     * Excel 批量导入（异步）：校验 HR 权限后立即返回 taskId，导入在专用线程池执行。
+     * 功能级权限在【提交时】校验——异步线程没有 UserContext（ThreadLocal 绑定请求线程）。
+     */
     @PostMapping("/import")
-    public ApiResponse<ImportReport> importExcel(@RequestParam("file") MultipartFile file) {
+    public ApiResponse<ImportTaskVO> importExcel(@RequestParam("file") MultipartFile file) {
         SysUser user = UserContext.require();
         if (user.getRole() != RoleEnum.HR) {
             throw BizException.forbidden("仅 HR 可执行数据导入");
         }
-        return ApiResponse.ok(excelImportService.importExcel(file));
+        return ApiResponse.ok(importTaskService.submit(file, user.getUsername()));
+    }
+
+    /** 导入任务进度轮询：仅任务提交者可见 */
+    @GetMapping("/import/tasks/{taskId}")
+    public ApiResponse<ImportTaskVO> importTaskStatus(@PathVariable String taskId) {
+        SysUser user = UserContext.require();
+        return ApiResponse.ok(importTaskService.get(taskId, user.getUsername()));
     }
 }

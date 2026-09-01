@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { fetchRoster } from '../api/api';
+import { fetchImportTask, fetchRoster, uploadExcel } from '../api/api';
 import { useAuth } from '../context/AuthContext';
-import type { EmployeeVO, Role } from '../types';
+import type { EmployeeVO, ImportTaskVO, Role } from '../types';
 
 /* ------------------------------------------------------------
  * 角色驱动的列渲染：与后端 RoleEnum 矩阵保持一致。
@@ -49,6 +49,39 @@ export default function Roster() {
   const [deptId, setDeptId] = useState<number | null>(null);
   const [keyword, setKeyword] = useState('');
   const [loading, setLoading] = useState(true);
+  // 异步导入任务：上传后轮询进度，成功后刷新列表
+  const [task, setTask] = useState<ImportTaskVO | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const isTaskActive =
+    task !== null && (task.status === 'PENDING' || task.status === 'RUNNING');
+
+  // 轮询导入进度：任务进行中每秒查一次，终态自动停止
+  useEffect(() => {
+    if (!isTaskActive || !task) return;
+    const timer = setTimeout(() => {
+      fetchImportTask(task.taskId)
+        .then((next) => setTask(next))
+        .catch(() => {});
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [task, isTaskActive]);
+
+  // 导入成功后刷新花名册（refreshKey 变化触发列表 effect 重跑）
+  useEffect(() => {
+    if (task?.status === 'SUCCESS') {
+      setRefreshKey((k) => k + 1);
+    }
+  }, [task?.status]);
+
+  const onUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // 允许连续选择同一个文件
+    if (!file) return;
+    uploadExcel(file)
+      .then((t) => setTask(t))
+      .catch(() => {});
+  };
 
   const visibleColumns = ALL_COLUMNS.filter((c) =>
     (ROLE_VISIBLE[role ?? 'EMPLOYEE']).includes(c.key)
@@ -73,7 +106,7 @@ export default function Roster() {
     return () => {
       cancelled = true;
     };
-  }, [deptId, keyword, page]);
+  }, [deptId, keyword, page, refreshKey]);
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -93,7 +126,35 @@ export default function Roster() {
         <span className="hint">
           当前期限：{role} · 行级/字段级权限已由后端处理，隐藏字段不会出现在响应中
         </span>
+        {role === 'HR' && (
+          <>
+            <label className="upload-btn">
+              上传 Excel 导入
+              <input type="file" accept=".xlsx,.xls" hidden onChange={onUpload} />
+            </label>
+            {task && (
+              <span className="hint">
+                {isTaskActive
+                  ? `导入中... 已处理 ${task.processedRows} 行`
+                  : task.status === 'SUCCESS'
+                    ? `导入完成：成功 ${task.successCount} 条，失败 ${task.failedCount} 条`
+                    : task.errorMessage ?? '导入失败'}
+              </span>
+            )}
+          </>
+        )}
       </div>
+
+      {task?.status === 'SUCCESS' && (task.failedCount ?? 0) > 0 && (
+        <div className="import-report">
+          <strong>行级错误报告（共 {task.failedCount} 条，修复后可整文件重传）：</strong>
+          <ul>
+            {(task.errors ?? []).slice(0, 20).map((err) => (
+              <li key={`${err.rowIndex}-${err.reason}`}>第 {err.rowIndex} 行：{err.reason}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <table>
         <thead>

@@ -94,6 +94,36 @@ main {
   color: #8a94a0;
 }
 
+/* ---- Excel 导入（HR 专属） ---- */
+.upload-btn {
+  padding: 6px 14px;
+  border: 1px solid #2f6fed;
+  border-radius: 4px;
+  background: #2f6fed;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.upload-btn:hover {
+  background: #2558c4;
+}
+
+.import-report {
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border: 1px solid #f0c36d;
+  background: #fdf6e3;
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.import-report ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: #7a5b00;
+}
+
 /* ---- 表格 ---- */
 table {
   width: 100%;

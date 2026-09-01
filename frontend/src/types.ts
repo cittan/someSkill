@@ -46,3 +46,17 @@ export interface RosterQuery {
   page: number;
   size: number;
 }
+
+/** 异步导入任务状态（与后端 ImportTaskVO 一致） */
+export type ImportTaskStatus = 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED';
+
+export interface ImportTaskVO {
+  taskId: string;
+  status: ImportTaskStatus;
+  processedRows: number;
+  total: number;
+  successCount: number;
+  failedCount: number;
+  errors: Array<{ rowIndex: number; reason: string }> | null;
+  errorMessage: string | null;
+}

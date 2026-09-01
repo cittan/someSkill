@@ -15,8 +15,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.springframework.web.multipart.MultipartFile;
 
+import java.io.File;
+import java.io.FileInputStream;
 import java.io.InputStream;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -72,23 +73,25 @@ public class ExcelImportService {
         }
     }
 
-    public ImportReport importExcel(MultipartFile file) {
-        if (file == null || file.isEmpty()) {
-            throw BizException.badRequest("上传文件为空");
-        }
-
+    /**
+     * 导入入口（异步任务调用）：读磁盘文件，每处理完一批通过 progressListener 上报累计行数。
+     *
+     * @param progressListener 进度回调，参数为已处理行数（含校验失败行）；可为 null
+     */
+    public ImportReport importExcel(File file, java.util.function.IntConsumer progressListener) {
         ImportReport report = new ImportReport(0);
         // 部门表是组织架构级小表，一次性加载建内存映射（避免逐行查库）
         Map<String, Long> deptIdByName = departmentMapper.selectAll().stream()
                 .collect(Collectors.toMap(Department::getName, Department::getId, (a, b) -> a));
         // 文件内工号去重：跨批次共享状态
         Set<String> seenInFile = new HashSet<>();
-        // 数组包装使匿名类/lambda 内部可写（total 计数 / 是否已开始入库的标记）；
+        // 数组包装使匿名类/lambda 内部可写（total 计数 / 已处理行数 / 是否已开始入库的标记）；
         // 声明在 try 之外，catch 块需要读取 anyBatchPersisted 区分中断阶段
         int[] total = {0};
+        int[] processed = {0};
         boolean[] anyBatchPersisted = {false};
 
-        try (InputStream in = file.getInputStream()) {
+        try (InputStream in = new FileInputStream(file)) {
             List<EmployeeExcelRow> buffer = new ArrayList<>(BATCH_SIZE);
 
             EasyExcel.read(in, EmployeeExcelRow.class, new AnalysisEventListener<EmployeeExcelRow>() {
@@ -100,6 +103,7 @@ public class ExcelImportService {
                     if (buffer.size() == BATCH_SIZE) {
                         anyBatchPersisted[0] = true;
                         processBatch(buffer, deptIdByName, seenInFile, report);
+                        reportProgress(buffer.size());
                         buffer.clear();
                     }
                 }
@@ -110,7 +114,15 @@ public class ExcelImportService {
                     if (!buffer.isEmpty()) {
                         anyBatchPersisted[0] = true;
                         processBatch(buffer, deptIdByName, seenInFile, report);
+                        reportProgress(buffer.size());
                         buffer.clear();
+                    }
+                }
+
+                private void reportProgress(int batchSize) {
+                    processed[0] += batchSize;
+                    if (progressListener != null) {
+                        progressListener.accept(processed[0]);
                     }
                 }
             }).sheet().doRead();

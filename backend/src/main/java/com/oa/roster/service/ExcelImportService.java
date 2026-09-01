@@ -83,12 +83,13 @@ public class ExcelImportService {
                 .collect(Collectors.toMap(Department::getName, Department::getId, (a, b) -> a));
         // 文件内工号去重：跨批次共享状态
         Set<String> seenInFile = new HashSet<>();
+        // 数组包装使匿名类/lambda 内部可写（total 计数 / 是否已开始入库的标记）；
+        // 声明在 try 之外，catch 块需要读取 anyBatchPersisted 区分中断阶段
+        int[] total = {0};
+        boolean[] anyBatchPersisted = {false};
 
         try (InputStream in = file.getInputStream()) {
             List<EmployeeExcelRow> buffer = new ArrayList<>(BATCH_SIZE);
-            // 数组包装使匿名类内部可写（total 计数 / 是否已开始入库的标记）
-            int[] total = {0};
-            boolean[] anyBatchPersisted = {false};
 
             EasyExcel.read(in, EmployeeExcelRow.class, new AnalysisEventListener<EmployeeExcelRow>() {
                 @Override
@@ -119,8 +120,9 @@ public class ExcelImportService {
         } catch (Exception e) {
             if (anyBatchPersisted[0]) {
                 // 已有批次入库后中断：已提交批次保留（部分导入语义），
-                // 原始异常直接上抛由全局异常处理器兜底，修复后凭工号幂等重跑
-                throw e;
+                // 包装上抛由全局异常处理器兜底，修复后凭工号幂等重跑补齐剩余行
+                log.error("导入中途失败（已提交批次保留，可凭工号幂等重跑）", e);
+                throw new RuntimeException("导入中途失败，已入库部分保留，请修复后重新上传", e);
             }
             // 解析阶段（尚未入库任何批次）失败：提示用户检查文件
             log.error("Excel 解析失败", e);
